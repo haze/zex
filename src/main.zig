@@ -2,6 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 const client = @import("client.zig");
 const util = @import("util.zig");
+const wrapper = @import("wrapper.zig");
 
 const cURL = @cImport({
     @cInclude("curl/curl.h");
@@ -114,6 +115,13 @@ pub const custom = generateTopLevelFunction(null);
 pub fn download() void {}
 pub fn upload() void {}
 pub fn byLine() void {}
+
+test "wrapper" {
+    var easy_handle = try wrapper.EasyHandle.init();
+    try easy_handle.setVerbose(true);
+    var blob_data = [_]u8{ 't', 'e', 's', 't' };
+    try easy_handle.setSSLCertBlob(&blob_data, true);
+}
 
 test "simple get" {
     std.debug.print("\n", .{});
