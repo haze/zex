@@ -1,6 +1,7 @@
 const std = @import("std");
 const mem = std.mem;
 const util = @import("util.zig");
+const wrapper = @import("wrapper.zig");
 
 const cURL = @cImport({
     @cInclude("curl/curl.h");
@@ -11,64 +12,67 @@ pub const StringMap = std.array_hash_map.StringArrayHashMap([]const u8);
 
 /// Lower level cURL client that takes an allocator with every function
 pub const UnmanagedClient = struct {
-    const CurlInitError = error{CURLInitFailed};
-    handle: *cURL.CURL,
+    handle: wrapper.EasyHandle,
 
-    pub fn init() CurlInitError!UnmanagedClient {
-        if (cURL.curl_easy_init()) |handle| {
-            return UnmanagedClient{
-                .handle = handle,
-            };
-        }
-        return error.CURLInitFailed;
+    pub fn init() wrapper.EasyHandle.InitError!UnmanagedClient {
+        return UnmanagedClient{
+            .handle = try wrapper.EasyHandle.init(),
+        };
     }
 
     pub const PerformError = mem.Allocator.Error || util.CURLError;
 
     pub fn perform(self: UnmanagedClient, allocator: *mem.Allocator, request: HTTPRequest) PerformError![]const u8 {
         var sys_headers = StringMap.init(allocator);
-
-        var maybe_headers: ?*cURL.curl_slist = null;
-        defer cURL.curl_slist_free_all(maybe_headers);
-
         var buffer = std.ArrayList(u8).init(allocator);
 
         // set url
-        try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_URL, request.url.ptr));
+        try self.handle.setURL(request.url);
+        // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_URL, request.url.ptr));
 
         // set follow redirects
-        if (request.follow_redirects)
-            try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_FOLLOWLOCATION, @as(c_int, 1)));
+        // if (request.follow_redirects)
+        //     try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_FOLLOWLOCATION, @as(c_int, 1)));
+        try self.handle.setFollowLocation(request.follow_redirects);
 
-        if (request.verbose)
-            try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_VERBOSE, @as(c_long, 1)));
+        // if (request.verbose)
+        //     try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_VERBOSE, @as(c_long, 1)));
+        try self.handle.setVerbose(request.verbose);
 
         // set request specific things
         switch (request.method) {
             .GET => {
-                try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_HTTPGET, @as(c_long, 1)));
+                try self.handle.setHTTPGet(true);
+                // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_HTTPGET, @as(c_long, 1)));
             },
             .HEAD => {
-                try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_NOBODY, @as(c_long, 1)));
+                try self.handle.setNoBody(true);
+                // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_NOBODY, @as(c_long, 1)));
             },
             .POST => {
-                try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_POST, @as(c_long, 1)));
+                try self.handle.setPost(true);
+                // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_POST, @as(c_long, 1)));
             },
             .PUT => {
-                try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_UPLOAD, @as(c_long, 1)));
+                try self.handle.setUpload(true);
+                // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_UPLOAD, @as(c_long, 1)));
             },
             // otherwise, treat as GET or PUT
             else => {
                 if (request.body != null)
-                    try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_UPLOAD, @as(c_long, 1)));
+                    try self.handle.setUpload(true);
+                // if (request.body != null)
+                //     try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_UPLOAD, @as(c_long, 1)));
             },
         }
 
         // set write function
         // TODO(haze): see if this is correct (ignore body only on HEAD)
         if (request.method != .HEAD) {
-            try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_WRITEFUNCTION, curlWriteToU8ArrayList));
-            try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_WRITEDATA, @as(*c_void, &buffer)));
+            // try self.handle.setWriteCallback(curlWriteToU8ArrayList);
+            // try self.handle.setWriteData(&buffer);
+            // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_WRITEFUNCTION, curlWriteToU8ArrayList));
+            // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_WRITEDATA, @as(*c_void, &buffer)));
         }
 
         // if we have a body, we have to tell curl how big it is, or use chunked encoding
@@ -86,44 +90,49 @@ pub const UnmanagedClient = struct {
 
             if (body_length) |length| {
                 if (request.method == .POST) {
-                    try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_POSTFIELDS, @as(c_long, 0)));
-                    try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_POSTFIELDSIZE_LARGE, @intCast(c_long, length)));
+                    // try self.handle.setPostFields();
+                    try self.handle.setPostFieldSizeLarge(@intCast(i32, length));
+                    // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_POSTFIELDS, @as(c_long, 0)));
+                    // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_POSTFIELDSIZE_LARGE, @intCast(c_long, length)));
                 } else {
-                    try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_INFILESIZE_LARGE, @intCast(c_long, length)));
+                    try self.handle.setInFileSizeLarge(@intCast(i32, length));
+                    // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_INFILESIZE_LARGE, @intCast(c_long, length)));
                 }
             } else {
                 try sys_headers.put("Transfer-Encoding", "chunked");
             }
 
             switch (body) {
-                .json, .bytes => |buf| try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_POSTFIELDS, buf.ptr)),
+                .json, .bytes => |buf| try self.handle.setPostFields(buf),
+                // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_POSTFIELDS, buf.ptr)),
                 else => {},
             }
 
             try body.setHeader(&sys_headers);
         }
 
-        std.log.debug("system header map has {} entires", .{sys_headers.count()});
-        for (sys_headers.items()) |entry| {
-            std.log.debug("{}", .{entry});
-            maybe_headers = cURL.curl_slist_append(maybe_headers, (try std.fmt.allocPrint(allocator, "{}: {}", .{ entry.key, entry.value })).ptr);
-        }
-
         std.log.debug("custom header map has {} entires", .{request.headers.count()});
         for (request.headers.items()) |entry| {
             std.log.debug("{}", .{entry});
-            maybe_headers = cURL.curl_slist_append(maybe_headers, (try std.fmt.allocPrint(allocator, "{}: {}", .{ entry.key, entry.value })).ptr);
+            try sys_headers.put(entry.key, entry.value);
         }
 
         // set headers
-        if (maybe_headers) |headers|
-            try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_HTTPHEADER, headers));
+        var list = std.ArrayList([]const u8).init(allocator);
+        var iter = sys_headers.iterator();
+        while (iter.next()) |item| {
+            try list.append(try std.fmt.allocPrint(allocator, "{}, {}", .{ item.key, item.value }));
+        }
+        try self.handle.setHTTPHeaders(list);
+        // if (maybe_headers) |headers|
+        //     try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_HTTPHEADER, headers));
 
         // set request method
-        try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_CUSTOMREQUEST, request.method.string().ptr));
+        try self.handle.setCustomRequest(request.method.string());
+        // try util.convertCurlError(cURL.curl_easy_setopt(self.handle, .CURLOPT_CUSTOMREQUEST, request.method.string().ptr));
 
         // perform
-        try util.convertCurlError(cURL.curl_easy_perform(self.handle));
+        try util.convertCurlError(cURL.curl_easy_perform(self.handle.handle));
 
         return buffer.toOwnedSlice();
     }
@@ -133,7 +142,7 @@ pub const UnmanagedClient = struct {
     }
 };
 
-fn curlWriteToU8ArrayList(data: *c_void, size: c_uint, nmemb: c_uint, user_data: *c_void) callconv(.C) c_uint {
+fn curlWriteToU8ArrayList(data: *c_void, size: c_uint, nmemb: c_uint, user_data: *c_void) callconv(.C) usize {
     var buffer = @intToPtr(*std.ArrayList(u8), @ptrToInt(user_data));
     var typed_data = @intToPtr([*]u8, @ptrToInt(data));
     buffer.appendSlice(typed_data[0 .. nmemb * size]) catch return 0;

@@ -9,16 +9,16 @@ pub const StringList = std.ArrayList([]const u8);
 pub const EasyHandle = struct {
     handle: *cURL.CURL,
 
-    const InitError = error{EasyInitFailed};
+    pub const InitError = error{EasyInitFailed};
     pub fn init() InitError!EasyHandle {
         return EasyHandle{
             .handle = cURL.curl_easy_init() orelse return error.EasyInitFailed,
         };
     }
 
-    fn Callback(comptime option: cURL.CURLoption, comptime callbackProto: anytype) fn (EasyHandle, @TypeOf(callbackProto)) util.CURLError!void {
+    fn Callback(comptime option: cURL.CURLoption, comptime callbackProto: type) fn (EasyHandle, callbackProto) util.CURLError!void {
         return struct {
-            fn func(self: EasyHandle, callback: @TypeOf(callbackProto)) util.CURLError!void {
+            fn func(self: EasyHandle, comptime callback: callbackProto) util.CURLError!void {
                 return util.convertCurlError(cURL.curl_easy_setopt(self.handle, option, callback));
             }
         }.func;
@@ -32,7 +32,7 @@ pub const EasyHandle = struct {
         }.func;
     }
 
-    fn Long(comptime option: cURL.CURLoption) fn (EasyHandle, bool) util.CURLError!void {
+    fn Long(comptime option: cURL.CURLoption) fn (EasyHandle, i32) util.CURLError!void {
         return struct {
             fn func(self: EasyHandle, value: i32) util.CURLError!void {
                 return util.convertCurlError(cURL.curl_easy_setopt(self.handle, option, @as(c_long, value)));
@@ -89,7 +89,7 @@ pub const EasyHandle = struct {
         }.func;
     }
 
-    fn String(comptime option: cURL.CURLoption) fn (EasyHandle, bool) util.CURLError!void {
+    fn String(comptime option: cURL.CURLoption) fn (EasyHandle, []const u8) util.CURLError!void {
         return struct {
             fn func(self: EasyHandle, value: []const u8) util.CURLError!void {
                 return util.convertCurlError(cURL.curl_easy_setopt(self.handle, option, value.ptr));
@@ -97,15 +97,13 @@ pub const EasyHandle = struct {
         }.func;
     }
 
-    fn CurlStringList(comptime option: cURL.CURLoption) fn (EasyHandle, bool) util.CURLError!void {
+    // TODO(haze): this doesn't sit right with me, where slist starts off as null :/ thanks protty
+    fn CurlStringList(comptime option: cURL.CURLoption) fn (EasyHandle, StringList) util.CURLError!void {
         return struct {
-            fn func(self: EasyHandle, list: StringList) util.CURLError!void {
-                var maybe_list: ?cURL.curl_slist = null;
-                var iter = list.iterator();
-                if (maybe_list) |list| {
-                    while (iter.next()) |entry| {
-                        list = cURL.curl_slist_append(list, entry.ptr);
-                    }
+            fn func(self: EasyHandle, input_list: StringList) util.CURLError!void {
+                var list: cURL.curl_slist = undefined;
+                for (input_list.items) |item| {
+                    list = cURL.curl_slist_append(list, item.ptr);
                 }
                 return util.convertCurlError(cURL.curl_easy_setopt(
                     self.handle,
@@ -186,7 +184,7 @@ pub const EasyHandle = struct {
     /// Callback for wildcard download start of chunk. See [CURLOPT_CHUNK_BGN_FUNCTION](https://curl.se/libcurl/c/CURLOPT_CHUNK_BGN_FUNCTION.html)
     pub const setWildcardChunkStartCallback = Callback(.CURLOPT_CHUNK_BGN_FUNCTION, fn (*c_void, *c_void, c_int) callconv(.C) c_long);
     /// Callback for wildcard download end of chunk. See [CURLOPT_CHUNK_END_FUNCTION](https://curl.se/libcurl/c/CURLOPT_CHUNK_END_FUNCTION.html)
-    pub const setWildcardChunkStartCallback = Callback(.CURLOPT_CHUNK_BGN_FUNCTION, fn (*c_void) callconv(.C) c_long);
+    pub const setWildcardChunkEndCallback = Callback(.CURLOPT_CHUNK_END_FUNCTION, fn (*c_void) callconv(.C) c_long);
     /// Data pointer to pass to the chunk callbacks. See [CURLOPT_CHUNK_DATA](https://curl.se/libcurl/c/CURLOPT_CHUNK_DATA.html)
     pub const setChunkData = UserData(.CURLOPT_CHUNK_DATA);
     /// Callback for wildcard matching. See [CURLOPT_FNMATCH_FUNCTION](https://curl.se/libcurl/c/CURLOPT_FNMATCH_FUNCTION.html)
@@ -194,7 +192,7 @@ pub const EasyHandle = struct {
     /// Data pointer to pass to the wildcard matching callback. See [CURLOPT_FNMATCH_DATA](https://curl.se/libcurl/c/CURLOPT_FNMATCH_DATA.html)
     pub const setWildcardMatchData = UserData(.CURLOPT_FNMATCH_DATA);
     /// Suppress proxy CONNECT response headers from user callbacks. See [CURLOPT_SUPPRESS_CONNECT_HEADERS](https://curl.se/libcurl/c/CURLOPT_SUPPRESS_CONNECT_HEADERS.html)
-    pub const setWildcardChunkStartCallback = Switch(.CURLOPT_SUPPRESS_CONNECT_HEADERS);
+    pub const setSuppressProxyConnectResponseHeaders = Switch(.CURLOPT_SUPPRESS_CONNECT_HEADERS);
     /// Callback to be called before a new resolve request is started. See CURLOPT_RESOLVER_START_FUNCTION
     pub const setResolverStartCallback = Callback(.CURLOPT_RESOLVER_START_FUNCTION, fn (*c_void, *c_void, *c_void) callconv(.C) c_int);
     /// Data pointer to pass to resolver start callback. See [CURLOPT_RESOLVER_START_DATA](https://curl.se/libcurl/c/CURLOPT_RESOLVER_START_DATA.html)

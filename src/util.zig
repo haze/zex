@@ -89,7 +89,7 @@ pub const CURLError = error{
     UnknownCURLError,
 };
 
-pub fn convertCurlError(code: anytype) !void {
+pub fn convertCurlError(code: anytype) CURLError!void {
     if (code != .CURLE_OK)
         std.log.debug("convertCurlError( {} )", .{code});
     switch (code) {
