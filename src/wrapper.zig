@@ -6,7 +6,6 @@ const util = @import("util.zig");
 
 pub const StringList = std.ArrayList([]const u8);
 
-// TODO(haze): Add curl_opt_t (i64 on 64bit systems, 32 on 32bit systems)
 pub const EasyHandle = struct {
     handle: *cURL.CURL,
 
@@ -15,6 +14,14 @@ pub const EasyHandle = struct {
         return EasyHandle{
             .handle = cURL.curl_easy_init() orelse return error.EasyInitFailed,
         };
+    }
+
+    fn Callback(comptime option: cURL.CURLoption, comptime callbackProto: anytype) fn (EasyHandle, @TypeOf(callbackProto)) util.CURLError!void {
+        return struct {
+            fn func(self: EasyHandle, callback: @TypeOf(callbackProto)) util.CURLError!void {
+                return util.convertCurlError(cURL.curl_easy_setopt(self.handle, option, callback));
+            }
+        }.func;
     }
 
     fn Switch(comptime option: cURL.CURLoption) fn (EasyHandle, bool) util.CURLError!void {
@@ -33,9 +40,18 @@ pub const EasyHandle = struct {
         }.func;
     }
 
+    fn Parameter(comptime option: cURL.CURLoption, comptime ty: type) fn (EasyHandle, ty) util.CURLError!void {
+        return struct {
+            fn func(self: EasyHandle, value: ty) util.CURLError!void {
+                return util.convertCurlError(cURL.curl_easy_setopt(self.handle, option, value));
+            }
+        }.func;
+    }
+
     fn UserData(comptime option: cURL.CURLoption) fn (EasyHandle, anytype) util.CURLError!void {
         return struct {
             fn func(self: EasyHandle, value: anytype) util.CURLError!void {
+                // TODO(haze): is all user data supposed to be a pointer?
                 const ti = @typeInfo(@TypeOf(value));
                 if (ti != .Pointer) @compileError("Non pointer passed to userData");
                 return util.convertCurlError(cURL.curl_easy_setopt(self.handle, option, @as(*c_void, value)));
@@ -101,13 +117,89 @@ pub const EasyHandle = struct {
     }
 
     // Behavior functions
+    /// Display verbose information. See [CURLOPT_VERBOSE](https://curl.se/libcurl/c/CURLOPT_VERBOSE.html)
     pub const setVerbose = Switch(.CURLOPT_VERBOSE);
+    /// Include the header in the body output. See [CURLOPT_HEADER](https://curl.se/libcurl/c/CURLOPT_HEADER.html)
     pub const setHeader = Switch(.CURLOPT_HEADER);
+    /// Shut off the progress meter. See [CURLOPT_NOPROGRESS](https://curl.se/libcurl/c/CURLOPT_NOPROGRESS.html)
     pub const setNoProgress = Switch(.CURLOPT_NOPROGRESS);
+    /// Do not install signal handlers. See [CURLOPT_NOSIGNAL](https://curl.se/libcurl/c/CURLOPT_NOSIGNAL.html)
     pub const setNoSignal = Switch(.CURLOPT_NOSIGNAL);
+    /// Transfer multiple files according to a file name pattern. See [CURLOPT_WILDCARDMATCH](https://curl.se/libcurl/c/CURLOPT_WILDCARDMATCH.html)
     pub const setWildcardMatch = Switch(.CURLOPT_WILDCARDMATCH);
 
     // Callback Options
+    /// Callback for writing data. See [CURLOPT_WRITEFUNCTION](https://curl.se/libcurl/c/CURLOPT_WRITEFUNCTION.html)
+    pub const setWriteCallback = Callback(.CURLOPT_WRITEFUNCTION, fn (*c_void, usize, usize, *c_void) callconv(.C) usize);
+    /// Data pointer to pass to the write callback. See [CURLOPT_WRITEDATA](https://curl.se/libcurl/c/CURLOPT_WRITEDATA.html)
+    pub const setWriteData = UserData(.CURLOPT_WRITEDATA);
+    /// Callback for reading data. See [CURLOPT_READFUNCTION](https://curl.se/libcurl/c/CURLOPT_READFUNCTION.html)
+    pub const setReadFunction = Callback(.CURLOPT_READFUNCTION, fn (*c_void, usize, usize, *c_void) callconv(.C) usize);
+    /// Data pointer to pass to the read callback. See [CURLOPT_READDATA](https://curl.se/libcurl/c/CURLOPT_READDATA.html)
+    pub const setReadData = UserData(.CURLOPT_READDATA);
+    /// Callback for I/O operations. See [CURLOPT_IOCTLFUNCTION](https://curl.se/libcurl/c/CURLOPT_IOCTLFUNCTION.html)
+    pub const setIoCtlCallback = Callback(.CURLOPT_IOCTLFUNCTION, fn (*cURL.CURL, c_int, *c_void) callconv(.C) cURL.curlioerr);
+    /// Data pointer to pass to the I/O callback. See [CURLOPT_IOCTLDATA](https://curl.se/libcurl/c/CURLOPT_IOCTLDATA.html)
+    pub const setIoCtlData = UserData(.CURLOPT_IOCTLDATA);
+    /// Callback for seek operations. See [CURLOPT_SEEKFUNCTION](https://curl.se/libcurl/c/CURLOPT_SEEKFUNCTION.html)
+    pub const setSeekCallback = Callback(.CURLOPT_SEEKFUNCTION, fn (*c_void, cURL.curl_off_t, c_int) callconv(.C) c_int);
+    /// Data pointer to pass to the seek callback. See [CURLOPT_SEEKDATA](https://curl.se/libcurl/c/CURLOPT_SEEKDATA.html)
+    pub const setSeekData = UserData(.CURLOPT_SEEKDATA);
+    /// Callback for sockopt operations. See [CURLOPT_SOCKOPTFUNCTION](https://curl.se/libcurl/c/CURLOPT_SOCKOPTFUNCTION.html)
+    pub const setSockOptCallback = Callback(.CURLOPT_SOCKOPTFUNCTION, fn (*c_void, cURL.curl_socket_t, cURL.suclsocktype) callconv(.C) c_int);
+    /// Data pointer to pass to the sockopt callback. See [CURLOPT_SOCKOPTDATA](https://curl.se/libcurl/c/CURLOPT_SOCKOPTDATA.html)
+    pub const setSockOptData = UserData(.CURLOPT_SOCKOPTDATA);
+    /// Callback for socket creation. See [CURLOPT_OPENSOCKETFUNCTION](https://curl.se/libcurl/c/CURLOPT_OPENSOCKETFUNCTION.html)
+    pub const setSocketCreationCallback = Callback(.CURLOPT_OPENSOCKETFUNCTION, fn (*c_void, cURL.curlsocktype, cURL.curl_sockaddr) callconv(.C) cURL.curl_socket_t);
+    /// Data pointer to pass to the open socket callback. See [CURLOPT_OPENSOCKETDATA](https://curl.se/libcurl/c/CURLOPT_OPENSOCKETDATA.html)
+    pub const setOpenSocketData = UserData(.CURLOPT_OPENSOCKETDATA);
+    /// Callback for closing socket. See [CURLOPT_CLOSESOCKETFUNCTION](https://curl.se/libcurl/c/CURLOPT_CLOSESOCKETFUNCTION.html)
+    pub const setCloseSocketCallback = Callback(.CURLOPT_CLOSESOCKETFUNCTION, fn (*c_void, cURL.curl_socket_t) callconv(.C) c_int);
+    /// Data pointer to pass to the close socket callback. See [CURLOPT_CLOSESOCKETDATA](https://curl.se/libcurl/c/CURLOPT_CLOSESOCKETDATA.html)
+    pub const setCloseSocketData = UserData(.CURLOPT_CLOSESOCKETDATA);
+    /// Callback for progress meter. See [CURLOPT_XFERINFOFUNCTION](https://curl.se/libcurl/c/CURLOPT_XFERINFOFUNCTION.html)
+    pub const setTransferFunction = Callback(.CURLOPT_XFERINFOFUNCTION, fn (*c_void, cURL.curl_diff_t, cURL.curl_diff_t, cURL.curl_diff_t) callconv(.C) c_int);
+    /// Data pointer to pass to the progress meter callback. See [CURLOPT_XFERINFODATA](https://curl.se/libcurl/c/CURLOPT_XFERINFODATA.html)
+    pub const setTransferFunctionData = UserData(.CURLOPT_XFERINFODATA);
+    /// Callback for writing received headers. See [CURLOPT_HEADERFUNCTION](https://curl.se/libcurl/c/CURLOPT_HEADERFUNCTION.html)
+    pub const setHeaderCallback = Callback(.CURLOPT_ERRORBUFFER, fn ([]const u8, usize, usize, *c_void) callconv(.C) usize);
+    /// Data pointer to pass to the header callback. See [CURLOPT_HEADERDATA](https://curl.se/libcurl/c/CURLOPT_HEADERDATA.html)
+    pub const setHeaderData = UserData(.CURLOPT_HEADERDATA);
+    /// Callback for debug information. See [CURLOPT_DEBUGFUNCTION](https://curl.se/libcurl/c/CURLOPT_DEBUGFUNCTION.html)
+    pub const setDebugCallback = Callback(.CURLOPT_DEBUGFUNCTION, fn (cURL.curl_infotype, []const u8, usize, *c_void) callconv(.C) c_int);
+    /// Data pointer to pass to the debug callback. See [CURLOPT_DEBUGDATA](https://curl.se/libcurl/c/CURLOPT_DEBUGFUNCTION.html)
+    pub const setDebugData = UserData(.CURLOPT_DEBUGDATA);
+    /// Callback for SSL context logic. See [CURLOPT_SSL_CTX_FUNCTION]()
+    pub const setSSLContextCallback = Callback(.CURLOPT_SSL_CTX_FUNCTION, fn (cURL.CURL, *c_void, *c_void) callconv(.C) cURL.CURLcode);
+    /// Data pointer to pass to the SSL context callback. See [CURLOPT_SSL_CTX_DATA](https://curl.se/libcurl/c/CURLOPT_SSL_CTX_DATA.html)
+    pub const setSSLContextData = UserData(.CURLOPT_SSL_CTX_DATA);
+    /// Callback for code base conversion. See [CURLOPT_CONV_TO_NETWORK_FUNCTION](https://curl.se/libcurl/c/CURLOPT_CONV_TO_NETWORK_FUNCTION.html)
+    pub const setConvToNetworkCallback = Callback(.CURLOPT_CONV_TO_NETWORK_FUNCTION, fn ([]const u8, usize) callconv(.C) cURL.CURLcode);
+    /// Callback for code base conversion. See [CURLOPT_CONV_FROM_NETWORK_FUNCTION](https://curl.se/libcurl/c/CURLOPT_CONV_FROM_NETWORK_FUNCTION.html)
+    pub const setConvFromNetworkCallback = Callback(.CURLOPT_CONV_FROM_NETWORK_FUNCTION, fn (*c_void, usize, usize, *c_void) callconv(.C) usize);
+    /// Callback for code base conversion. See [CURLOPT_CONV_FROM_UTF8_FUNCTION](https://curl.se/libcurl/c/CURLOPT_CONV_FROM_UTF8_FUNCTION.html)
+    pub const setConvFromUTF8Callback = Callback(.CURLOPT_CONV_FROM_UTF8_FUNCTION, fn (*c_void, usize, usize, *c_void) callconv(.C) usize);
+    /// Callback for RTSP interleaved data. See [CURLOPT_INTERLEAVEFUNCTION](https://curl.se/libcurl/c/CURLOPT_INTERLEAVEFUNCTION.html)
+    pub const setRTSPInterleaveCallback = Callback(.CURLOPT_INTERLEAVEFUNCTION, fn (*c_void, usize, usize, *c_void) callconv(.C) usize);
+    /// Data pointer to pass to the RTSP interleave callback. See [CURLOPT_INTERLEAVEDATA](https://curl.se/libcurl/c/CURLOPT_INTERLEAVEDATA.html)
+    pub const setTRSPInterleaveData = UserData(.CURLOPT_INTERLEAVEDATA);
+    /// Callback for wildcard download start of chunk. See [CURLOPT_CHUNK_BGN_FUNCTION](https://curl.se/libcurl/c/CURLOPT_CHUNK_BGN_FUNCTION.html)
+    pub const setWildcardChunkStartCallback = Callback(.CURLOPT_CHUNK_BGN_FUNCTION, fn (*c_void, *c_void, c_int) callconv(.C) c_long);
+    /// Callback for wildcard download end of chunk. See [CURLOPT_CHUNK_END_FUNCTION](https://curl.se/libcurl/c/CURLOPT_CHUNK_END_FUNCTION.html)
+    pub const setWildcardChunkStartCallback = Callback(.CURLOPT_CHUNK_BGN_FUNCTION, fn (*c_void) callconv(.C) c_long);
+    /// Data pointer to pass to the chunk callbacks. See [CURLOPT_CHUNK_DATA](https://curl.se/libcurl/c/CURLOPT_CHUNK_DATA.html)
+    pub const setChunkData = UserData(.CURLOPT_CHUNK_DATA);
+    /// Callback for wildcard matching. See [CURLOPT_FNMATCH_FUNCTION](https://curl.se/libcurl/c/CURLOPT_FNMATCH_FUNCTION.html)
+    pub const setWildcardMatchCallback = Callback(.CURLOPT_FNMATCH_FUNCTION, fn (*c_void, []const u8, []const u8) callconv(.C) c_int);
+    /// Data pointer to pass to the wildcard matching callback. See [CURLOPT_FNMATCH_DATA](https://curl.se/libcurl/c/CURLOPT_FNMATCH_DATA.html)
+    pub const setWildcardMatchData = UserData(.CURLOPT_FNMATCH_DATA);
+    /// Suppress proxy CONNECT response headers from user callbacks. See [CURLOPT_SUPPRESS_CONNECT_HEADERS](https://curl.se/libcurl/c/CURLOPT_SUPPRESS_CONNECT_HEADERS.html)
+    pub const setWildcardChunkStartCallback = Switch(.CURLOPT_SUPPRESS_CONNECT_HEADERS);
+    /// Callback to be called before a new resolve request is started. See CURLOPT_RESOLVER_START_FUNCTION
+    pub const setResolverStartCallback = Callback(.CURLOPT_RESOLVER_START_FUNCTION, fn (*c_void, *c_void, *c_void) callconv(.C) c_int);
+    /// Data pointer to pass to resolver start callback. See [CURLOPT_RESOLVER_START_DATA](https://curl.se/libcurl/c/CURLOPT_RESOLVER_START_DATA.html)
+    pub const setResolverStartData = UserData(.CURLOPT_RESOLVER_START_DATA);
+
     // Error Options
     /// Error message buffer. See [CURLOPT_ERRORBUFFER](https://curl.se/libcurl/c/CURLOPT_ERRORBUFFER.html)
     pub const setErrorBuffer = ProvidedBuffer(.CURLOPT_ERRORBUFFER);
@@ -142,7 +234,7 @@ pub const EasyHandle = struct {
     /// Tunnel through the HTTP proxy. [CURLOPT_HTTPPROXYTUNNEL](https://curl.se/libcurl/c/CURLOPT_HTTPPROXYTUNNEL.html)
     pub const setHTTPProxyTunnel = Switch(.CURLOPT_HTTPPROXYTUNNEL);
     /// Connect to a specific host and port. See [CURLOPT_CONNECT_TO](https://curl.se/libcurl/c/CURLOPT_CONNECT_TO.html)
-    pub const setConnectTo = StringList(.CURLOPT_CONNECT_TO);
+    pub const setConnectTo = CurlStringList(.CURLOPT_CONNECT_TO);
     /// Socks5 authentication methods. See [CURLOPT_SOCKS5_AUTH](https://curl.se/libcurl/c/CURLOPT_SOCKS5_AUTH.html)
     pub const setSocks5Auth = Long(.CURLOPT_SOCKS5_AUTH);
     /// Socks5 GSSAPI service name. [CURLOPT_SOCKS5_GSSAPI_SERVICE](https://curl.se/libcurl/c/CURLOPT_SOCKS5_GSSAPI_SERVICE.html)
@@ -253,26 +345,24 @@ pub const EasyHandle = struct {
     pub const setPostFields = String(.CURLOPT_POSTFIELDS);
     /// The POST data is this big. See [CURLOPT_POSTFIELDSIZE](https://curl.se/libcurl/c/CURLOPT_POSTFIELDSIZE.html)
     pub const setPostFieldSize = Long(.CURLOPT_POSTFIELDSIZE);
-    // TODO(haze): curl_off_t
     /// The POST data is this big. See [CURLOPT_POSTFIELDSIZE_LARGE](https://curl.se/libcurl/c/CURLOPT_POSTFIELDSIZE_LARGE.html)
-    pub const setPostFieldSizeLarge = Long(.CURLOPT_MAIL_FROM);
+    pub const setPostFieldSizeLarge = Parameter(.CURLOPT_MAIL_FROM, cURL.curl_off_t);
     /// Send a POST with this data - and copy it. See [CURLOPT_COPYPOSTFIELDS](https://curl.se/libcurl/c/CURLOPT_COPYPOSTFIELDS.html)
     pub const setCopyPostFields = String(.CURLOPT_COPYPOSTFIELDS);
     /// Multipart formpost HTTP POST. See [CURLOPT_HTTPPOST](https://curl.se/libcurl/c/CURLOPT_HTTPPOST.html)
-    // TODO(haze): curl_httppost
-    pub const setHTTPPost = String(.CURLOPT_HTTPPOST);
+    pub const setHTTPPost = Parameter(.CURLOPT_HTTPPOST, cURL.curl_httppost);
     /// Referer: header. See [CURLOPT_REFERER](https://curl.se/libcurl/c/CURLOPT_REFERER.html)
     pub const setReferer = String(.CURLOPT_REFERER);
     /// User-Agent: header. See [CURLOPT_USERAGENT](https://curl.se/libcurl/c/CURLOPT_USERAGENT.html)
     pub const setUserAgent = String(.CURLOPT_USERAGENT);
     /// Custom HTTP headers. See [CURLOPT_HTTPHEADER](https://curl.se/libcurl/c/CURLOPT_HTTPHEADER.html)
-    pub const setHTTPHeaders = StringList(.CURLOPT_HTTPHEADER);
+    pub const setHTTPHeaders = CurlStringList(.CURLOPT_HTTPHEADER);
     /// Control custom headers. See [CURLOPT_HEADEROPT](https://curl.se/libcurl/c/CURLOPT_HEADEROPT.html)
     pub const setHeaderOptions = Long(.CURLOPT_HEADEROPT);
     /// Custom HTTP headers sent to proxy. See [CURLOPT_PROXYHEADER](https://curl.se/libcurl/c/CURLOPT_PROXYHEADER.html)
-    pub const setHTTPProxyHeaders = StringList(.CURLOPT_PROXYHEADER);
+    pub const setHTTPProxyHeaders = CurlStringList(.CURLOPT_PROXYHEADER);
     /// Alternative versions of 200 OK. See [CURLOPT_HTTP200ALIASES](https://curl.se/libcurl/c/CURLOPT_HTTP200ALIASES.html)
-    pub const setHTTP200Aliases = StringList(.CURLOPT_HTTP200ALIASES);
+    pub const setHTTP200Aliases = CurlStringList(.CURLOPT_HTTP200ALIASES);
     /// Cookie(s) to send. See [CURLOPT_COOKIE](https://curl.se/libcurl/c/CURLOPT_COOKIE.html)
     pub const setCookies = String(.CURLOPT_COOKIE);
     /// File to read cookies from. See [CURLOPT_COOKIEFILE](https://curl.se/libcurl/c/CURLOPT_COOKIEFILE.html)
@@ -292,13 +382,11 @@ pub const EasyHandle = struct {
     /// Enable HSTS. See [CURLOPT_HSTS_CTRL](https://curl.se/libcurl/c/CURLOPT_HSTS_CTRL.html)
     pub const setHSTSCtrl = Long(.CURLOPT_HSTS_CTRL);
     /// Set HSTS read callback. See [CURLOPT_HSTSREADFUNCTION](https://curl.se/libcurl/c/CURLOPT_HSTSREADFUNCTION.html)
-    // TODO(haze): callback func
-    pub const setHSTSReadCallback = Long(.CURLOPT_HSTSREADFUNCTION);
+    pub const setHSTSReadCallback = Callback(.CURLOPT_HSTSREADFUNCTION, fn (cURL.CURL, *cURL.curl_hstentry, *c_void) callconv(.C) cURL.CURLSTScode);
     /// Pass pointer to the HSTS read callback. See [CURLOPT_HSTSREADDATA](https://curl.se/libcurl/c/CURLOPT_HSTSREADDATA.html)
     pub const setHSTSReadData = UserData(.CURLOPT_HSTSREADDATA);
     /// Set HSTS write callback. See [CURLOPT_HSTSWRITEFUNCTION]()
-    // TODO(haze): callback func
-    pub const setHSTSWriteCallback = Long(.CURLOPT_HSTSWRITEFUNCTION);
+    pub const setHSTSWriteCallback = Callback(.CURLOPT_HSTSWRITEFUNCTION, fn (cURL.CURL, *cURL.curl_hstentry, *cURL.curl_index, *c_void) callconv(.C) cURL.CURLSTScode);
     /// Pass pointer to the HSTS write callback. See [CURLOPT_HSTSWRITEDATA]()
     pub const setHSTSWriteData = UserData(.CURLOPT_HSTSWRITEDATA);
     /// Do an HTTP GET request. See [CURLOPT_HTTPGET](https://curl.se/libcurl/c/CURLOPT_HTTPGET.html)
@@ -334,7 +422,7 @@ pub const EasyHandle = struct {
     /// Address of the sender. See [CURLOPT_MAIL_FROM](https://curl.se/libcurl/c/CURLOPT_MAIL_FROM.html)
     pub const setMailFrom = String(.CURLOPT_MAIL_FROM);
     /// Address of the recipients. See [CURLOPT_MAIL_RCPT](https://curl.se/libcurl/c/CURLOPT_MAIL_RCPT.html)
-    pub const setMailRecipient = StringList(.CURLOPT_MAIL_RCPT);
+    pub const setMailRecipient = CurlStringList(.CURLOPT_MAIL_RCPT);
     /// Authentication address. See [CURLOPT_MAIL_AUTH](https://curl.se/libcurl/c/CURLOPT_MAIL_AUTH.html)
     pub const setMailAuth = String(.CURLOPT_MAIL_AUTH);
     /// Allow RCPT TO command to fail for some recipients. See [CURLOPT_MAIL_RCPT_ALLLOWFAILS](https://curl.se/libcurl/c/CURLOPT_MAIL_RCPT_ALLLOWFAILS.html)
@@ -350,11 +438,11 @@ pub const EasyHandle = struct {
     /// Use active FTP. See [CURLOPT_FTPPORT](https://curl.se/libcurl/c/CURLOPT_FTPPORT.html)
     pub const setFTPPort = String(.CURLOPT_FTPPORT);
     /// Commands to run before transfer. See [CURLOPT_QUOTE](https://curl.se/libcurl/c/CURLOPT_QUOTE.html)
-    pub const setQuote = StringList(.CURLOPT_QUOTE);
+    pub const setQuote = CurlStringList(.CURLOPT_QUOTE);
     /// Commands to run after transfer. See [CURLOPT_POSTQUOTE](https://curl.se/libcurl/c/CURLOPT_POSTQUOTE.html)
-    pub const setPostQuote = StringList(.CURLOPT_POSTQUOTE);
+    pub const setPostQuote = CurlStringList(.CURLOPT_POSTQUOTE);
     /// Commands to run just before transfer. See [CURLOPT_PREQUOTE](https://curl.se/libcurl/c/CURLOPT_PREQUOTE.html)
-    pub const setPreQuote = StringList(.CURLOPT_PREQUOTE);
+    pub const setPreQuote = CurlStringList(.CURLOPT_PREQUOTE);
     /// Append to remote file. See [CURLOPT_APPEND](https://curl.se/libcurl/c/CURLOPT_APPEND.html)
     pub const setAppend = Switch(.CURLOPT_APPEND);
     /// Use EPTR. See [CURLOPT_FTP_USE_EPRT](https://curl.se/libcurl/c/CURLOPT_FTP_USE_EPRT.html)
@@ -426,8 +514,7 @@ pub const EasyHandle = struct {
     /// Set upload buffer size. See [CURLOPT_UPLOAD_BUFFERSIZE](https://curl.se/libcurl/c/CURLOPT_UPLOAD_BUFFERSIZE.html)
     pub const setUploadBufferSize = Long(.CURLOPT_ABSTRACT_UNIX_SOCKET);
     /// Post/send MIME data. See [CURLOPT_MIMEPOST](https://curl.se/libcurl/c/CURLOPT_MIMEPOST.html)
-    // TODO(haze): curl_mime
-    pub const setMimePost = UserData(.CURLOPT_MIMEPOST);
+    pub const setMimePost = Parameter(.CURLOPT_MIMEPOST, cURL.curl_mime);
     /// Maximum file size to get. See [CURLOPT_MAXFILESIZE](https://curl.se/libcurl/c/CURLOPT_MAXFILESIZE.html)
     pub const setMaxFileSize = Long(.CURLOPT_MAXFILESIZE);
     /// Maximum file size to get. See [CURLOPT_MAXFILESIZE_LARGE](https://curl.se/libcurl/c/CURLOPT_MAXFILESIZE_LARGE.html)
@@ -471,7 +558,7 @@ pub const EasyHandle = struct {
     /// Use TLS/SSL. See [CURLOPT_USE_SSL](https://curl.se/libcurl/c/CURLOPT_USE_SSL.html)
     pub const setUseSSL = Long(.CURLOPT_USE_SSL);
     /// Provide fixed/fake name resolves. See [CURLOPT_RESOLVE](https://curl.se/libcurl/c/CURLOPT_RESOLVE.html)
-    pub const setResolves = StringList(.CURLOPT_RESOLVE);
+    pub const setResolves = CurlStringList(.CURLOPT_RESOLVE);
     /// Bind name resolves to this interface. See [CURLOPT_DNS_INTERFACE](https://curl.se/libcurl/c/CURLOPT_DNS_INTERFACE.html)
     pub const setDNSInterface = String(.CURLOPT_DNS_INTERFACE);
     /// Bind name resolves to this IP4 address. See [CURLOPT_DNS_LOCAL_IP4](https://curl.se/libcurl/c/CURLOPT_DNS_LOCAL_IP4.html)
@@ -490,73 +577,138 @@ pub const EasyHandle = struct {
     pub const setUpkeepIntervalMillis = Long(.CURLOPT_UPKEEP_INTERVAL_MS);
 
     // SSL and Security Options
+    /// Client cert. See [CURLOPT_SSLCERT](https://curl.se/libcurl/c/CURLOPT_SSLCERT.html)
     pub const setSSLCert = String(.CURLOPT_SSLCERT);
+    /// Client cert memory buffer. See [CURLOPT_SSLCERT_BLOB](https://curl.se/libcurl/c/CURLOPT_SSLCERT_BLOB.html)
     pub const setSSLCertBlob = Blob(.CURLOPT_SSLCERT_BLOB);
+    /// Proxy client cert. See [CURLOPT_PROXY_SSLCERT](https://curl.se/libcurl/c/CURLOPT_PROXY_SSLCERT.html)
     pub const setProxySSLCert = String(.CURLOPT_PROXY_SSLCERT);
+    /// Proxy client cert memory buffer. See [CURLOPT_PROXY_SSLCERT_BLOB](https://curl.se/libcurl/c/CURLOPT_PROXY_SSLCERT_BLOB.html)
     pub const setProxySSLCertBlob = Blob(.CURLOPT_PROXY_SSLCERT_BLOB);
+    /// Client cert type.  See [CURLOPT_SSLCERTTYPE](https://curl.se/libcurl/c/CURLOPT_SSLCERTTYPE.html)
     pub const setSSLCertType = String(.CURLOPT_SSL_CERTYPE);
+    /// Proxy client cert type.  See [CURLOPT_PROXY_SSLCERTTYPE](https://curl.se/libcurl/c/CURLOPT_PROXY_SSLCERTTYPE.html)
     pub const setProxySSLCertType = String(.CURLOPT_PROXY_SSLCERTTYPE);
+    /// Client key. See [CURLOPT_SSLKEY](https://curl.se/libcurl/c/CURLOPT_SSLKEY.html)
     pub const setSSLKey = String(.CURLOPT_SSLKEY);
+    /// Client key type. See [CURLOPT_SSLKEYTYPE](https://curl.se/libcurl/c/CURLOPT_SSLKEYTYPE.html)
     pub const setSSLKeyType = String(.CURLOPT_SSL_KEYTYPE);
+    /// Client key memory buffer. See [CURLOPT_SSLKEY_BLOB](https://curl.se/libcurl/c/CURLOPT_SSLKEY_BLOB.html)
     pub const setSSLKeyBlob = Blob(.CURLOPT_SSLKEY_BLOB);
+    /// Proxy client key. See [CURLOPT_PROXY_SSLKEY](https://curl.se/libcurl/c/CURLOPT_PROXY_SSLKEY.html)
     pub const setProxySSLKey = String(.CURLOPT_SSH_HOST_PUBLIC_KEY_MD5);
+    /// Proxy client key. See [CURLOPT_PROXY_SSLKEY_BLOB](https://curl.se/libcurl/c/CURLOPT_PROXY_SSLKEY_BLOB.html)
     pub const setProxySSLKeyBlob = Blob(.CURLOPT_PROXY_SSLKEY_BLOB);
+    /// Proxy client key type. See [CURLOPT_PROXY_SSLKEYTYPE](https://curl.se/libcurl/c/CURLOPT_PROXY_SSLKEYTYPE.html)
     pub const setProxySSLKeyType = String(.CURLOPT_PROXY_SSLKEYTYPE);
+    /// Client key password. See [CURLOPT_KEYPASSWD](https://curl.se/libcurl/c/CURLOPT_KEYPASSWD.html)
     pub const setKeyPassword = String(.CURLOPT_KEYPASSWD);
+    /// Proxy client key password. See [CURLOPT_PROXY_KEYPASSWD](https://curl.se/libcurl/c/CURLOPT_PROXY_KEYPASSWD.html)
     pub const setProxyKeyPassword = String(.CURLOPT_PROXY_KEYPASSWD);
+    /// Set key exchange curves. See [CURLOPT_SSL_EC_CURVES](https://curl.se/libcurl/c/CURLOPT_SSL_EC_CURVES.html)
     pub const setSSLECCurves = String(.CURLOPT_SSL_EC_CURVES);
+    /// Enable use of ALPN. See [CURLOPT_SSL_ENABLE_ALPN](https://curl.se/libcurl/c/CURLOPT_SSL_ENABLE_ALPN.html)
     pub const setSSLEnableALPN = Switch(.CURLOPT_SSL_ENABLE_ALPN);
+    /// Enable use of NPN. See [CURLOPT_SSL_ENABLE_NPN](https://curl.se/libcurl/c/CURLOPT_SSL_ENABLE_NPN.html)
     pub const setSSLEnableNPN = Switch(.CURLOPT_SSL_ENABLE_NPN);
+    /// Use identifier with SSL engine. See [CURLOPT_SSLENGINE](https://curl.se/libcurl/c/CURLOPT_SSLENGINE.html)
     pub const setSSLEngine = String(.CURLOPT_SSLENGINE);
+    /// Default SSL engine. See [CURLOPT_SSLENGINE_DEFAULT](https://curl.se/libcurl/c/CURLOPT_SSLENGINE_DEFAULT.html)
     pub const setSSLEngineDefault = Switch(.CURLOPT_SSLENGINE_DEFAULT);
+    /// Enable TLS False Start. See [CURLOPT_SSL_FALSESTART](https://curl.se/libcurl/c/CURLOPT_SSL_FALSESTART.html)
     pub const setSSLFalseStart = Switch(.CURLOPT_SSL_FALSESTART);
+    /// SSL version to use. See [CURLOPT_SSLVERSION](https://curl.se/libcurl/c/CURLOPT_SSLVERSION.html)
     pub const setSSLVersion = Long(.CURLOPT_SSLVERSION);
+    /// Proxy SSL version to use. See [CURLOPT_PROXY_SSLVERSION](https://curl.se/libcurl/c/CURLOPT_PROXY_SSLVERSION.html)
     pub const setProxySSLVersion = Long(.CURLOPT_PROXY_SSLVERSION);
+    /// Verify the host name in the SSL certificate. See [CURLOPT_SSL_VERIFYHOST](https://curl.se/libcurl/c/CURLOPT_SSL_VERIFYHOST.html)
     pub const setSSLVerifyHost = Switch(.CURLOPT_SSH_HOST_PUBLIC_KEY_MD5);
+    /// Verify the host name in the proxy SSL certificate. See [CURLOPT_PROXY_SSL_VERIFYHOST](https://curl.se/libcurl/c/CURLOPT_PROXY_SSL_VERIFYHOST.html)
     pub const setProxySSLVerifyHost = Switch(.CURLOPT_SSL_VERIFYHOST);
+    /// Verify the SSL certificate. See [CURLOPT_SSL_VERIFYPEER](https://curl.se/libcurl/c/CURLOPT_SSL_VERIFYPEER.html)
     pub const setSSLVerifyPeer = Switch(.CURLOPT_SSL_VERIFYPEER);
+    /// Verify the proxy SSL certificate. See [CURLOPT_PROXY_SSL_VERIFYPEER](https://curl.se/libcurl/c/CURLOPT_PROXY_SSL_VERIFYPEER.html)
     pub const setProxySSLVerifyPeer = Switch(.CURLOPT_PROXY_SSL_VERIFYPEER);
+    /// Verify the SSL certificate's status. See [CURLOPT_SSL_VERIFYSTATUS](https://curl.se/libcurl/c/CURLOPT_SSL_VERIFYSTATUS.html)
     pub const setSSLVerifyStatus = Switch(.CURLOPT_SSL_VERIFYSTATUS);
+    /// CA cert bundle. See [CURLOPT_CAINFO](https://curl.se/libcurl/c/CURLOPT_CAINFO.html)
     pub const setCAInfo = String(.CURLOPT_CAINFO);
+    /// Proxy CA cert bundle. See [CURLOPT_PROXY_CAINFO](https://curl.se/libcurl/c/CURLOPT_PROXY_CAINFO.html)
     pub const setProxyCAInfo = String(.CURLOPT_PROXY_CAINFO);
+    /// Issuer certificate. See [CURLOPT_ISSUERCERT](https://curl.se/libcurl/c/CURLOPT_ISSUERCERT.html)
     pub const setIssuerCert = String(.CURLOPT_ISSUERCERT);
+    /// Issuer certificate memory buffer. See [CURLOPT_ISSUERCERT_BLOB](https://curl.se/libcurl/c/CURLOPT_ISSUERCERT_BLOB.html)
     pub const setIssuerCertBlob = Blob(.CURLOPT_ISSUERCERT_BLOB);
+    /// Proxy issuer certificate. See [CURLOPT_PROXY_ISSUERCERT](https://curl.se/libcurl/c/CURLOPT_PROXY_ISSUERCERT.html)
     pub const setProxyIssuerCert = String(.CURLOPT_PROXY_ISSUERCERT);
+    /// Proxy issuer certificate memory buffer. See [CURLOPT_PROXY_ISSUERCERT_BLOB](https://curl.se/libcurl/c/CURLOPT_PROXY_ISSUERCERT_BLOB.html)
     pub const setProxyIssuerCertBlob = Blob(.CURLOPT_PROXY_ISSUERCERT_BLOB);
+    /// Path to CA cert bundle. See [CURLOPT_CAPATH](https://curl.se/libcurl/c/CURLOPT_CAPATH.html)
     pub const setCAPath = String(.CURLOPT_CAPATH);
+    /// Path to proxy CA cert bundle. See [CURLOPT_PROXY_CAPATH](https://curl.se/libcurl/c/CURLOPT_PROXY_CAPATH.html)
     pub const setProxyCAPath = String(.CURLOPT_PROXY_CAPATH);
+    /// Certificate Revocation List. See [CURLOPT_CRLFILE](https://curl.se/libcurl/c/CURLOPT_CRLFILE.html)
     pub const setCRLFile = String(.CURLOPT_CRLFILE);
+    /// Proxy Certificate Revocation List. See [CURLOPT_PROXY_CRLFILE](https://curl.se/libcurl/c/CURLOPT_PROXY_CRLFILE.html)
     pub const setProxyCRLFile = String(.CURLOPT_PROXY_CRLFILE);
+    /// Extract certificate info. See [CURLOPT_CERTINFO](https://curl.se/libcurl/c/CURLOPT_CERTINFO.html)
     pub const setCertInfo = Switch(.CURLOPT_CERTINTO);
+    /// Set pinned SSL public key . See [CURLOPT_PINNEDPUBLICKEY](https://curl.se/libcurl/c/CURLOPT_PINNEDPUBLICKEY.html)
     pub const setPinnedPublicKey = String(.CURLOPT_PINNEDPUBKEY);
+    /// Set the proxy's pinned SSL public key. See [CURLOPT_PROXY_PINNEDPUBLICKEY](https://curl.se/libcurl/c/CURLOPT_PROXY_PINNEDPUBLICKEY.html)
     pub const setProxyPinnedPublicKey = String(.CURLOPT_PROXY_PINNEDPUBKEY);
+    /// Provide source for entropy random data. See [CURLOPT_RANDOM_FILE](https://curl.se/libcurl/c/CURLOPT_RANDOM_FILE.html)
     pub const setRandomFile = String(.CURLOPT_RANDOM_FILE);
+    /// Identify EGD socket for entropy. See [CURLOPT_EGDSOCKET](https://curl.se/libcurl/c/CURLOPT_EGDSOCKET.html)
     pub const setEDGSocket = String(.CURLOPT_EGDSOCKET);
+    /// Ciphers to use. See [CURLOPT_SSL_CIPHER_LIST](https://curl.se/libcurl/c/CURLOPT_SSL_CIPHER_LIST.html)
     pub const setSSLCipherList = String(.CURLOPT_SSL_CIPHERLIST);
+    /// Proxy ciphers to use. See [CURLOPT_PROXY_SSL_CIPHER_LIST](https://curl.se/libcurl/c/CURLOPT_PROXY_SSL_CIPHER_LIST.html)
     pub const setProxySSLCipherList = String(.CURLOPT_PROXY_SSL_CIPHER_LIST);
+    /// TLS 1.3 cipher suites to use. See [CURLOPT_TLS13_CIPHERS](https://curl.se/libcurl/c/CURLOPT_TLS13_CIPHERS.html)
     pub const setTLS13Ciphers = String(.CURLOPT_TLS13_CIPHERS);
+    /// Proxy TLS 1.3 cipher suites to use. See [CURLOPT_PROXY_TLS13_CIPHERS](https://curl.se/libcurl/c/CURLOPT_PROXY_TLS13_CIPHERS.html)
     pub const setProxyTLS13Ciphers = String(.CURLOPT_PROXY_TLS13_CIPHERS);
+    /// Disable SSL session-id cache. See [CURLOPT_SSL_SESSIONID_CACHE](https://curl.se/libcurl/c/CURLOPT_SSL_SESSIONID_CACHE.html)
     pub const setSSLSessionIDCache = Switch(.CURLOPT_SSL_SESSIONID_CACHE);
+    /// Control SSL behavior. See [CURLOPT_SSL_OPTIONS](https://curl.se/libcurl/c/CURLOPT_SSL_OPTIONS.html)
     pub const setSSLOptions = Long(.CURLOPT_SSL_OPTIONS);
+    /// Control proxy SSL behavior. See [CURLOPT_PROXY_SSL_OPTIONS](https://curl.se/libcurl/c/CURLOPT_PROXY_SSL_OPTIONS.html)
     pub const setProxySSLOptions = Long(.CURLOPT_PROXY_SSL_OPTIONS);
+    /// Kerberos security level. See [CURLOPT_KRBLEVEL](https://curl.se/libcurl/c/CURLOPT_KRBLEVEL.html)
     pub const setKRBLevel = String(.CURLOPT_KRBLEVEL);
+    /// Disable GSS-API delegation. See [CURLOPT_GSSAPI_DELEGATION](https://curl.se/libcurl/c/CURLOPT_GSSAPI_DELEGATION.html)
     pub const setGSAPIDelegation = Long(.CURLOPT_GSAPI_DELEGATION);
 
     // SSH Options
-    // TODO(haze): CURLOPT_KEYFILE_FUNCTION
+    /// SSH authentication types. See [CURLOPT_SSH_AUTH_TYPES](https://curl.se/libcurl/c/CURLOPT_SSH_AUTH_TYPES.html)
     pub const setSSHAuthTypes = Long(.CURLOPT_SSH_AUTH_TYPES);
+    /// Enable SSH compression. See [CURLOPT_SSH_COMPRESSION](https://curl.se/libcurl/c/CURLOPT_SSH_COMPRESSION.html)
     pub const setSSHCompression = Switch(.CURLOPT_COMPRESSION);
+    /// MD5 of host's public key. See [CURLOPT_SSH_HOST_PUBLIC_KEY_MD5](https://curl.se/libcurl/c/CURLOPT_SSH_HOST_PUBLIC_KEY_MD5.html)
     pub const setSSHHostPublicKeyMD5 = String(.CURLOPT_SSH_HOST_PUBLIC_KEY_MD5);
+    /// File name of public key. See [CURLOPT_SSH_PUBLIC_KEYFILE](https://curl.se/libcurl/c/CURLOPT_SSH_PUBLIC_KEYFILE.html)
     pub const setSSHPublicKeyfile = String(.CURLOPT_SSH_PUBLIC_KEYFILE);
+    /// File name of private key. See [CURLOPT_SSH_PRIVATE_KEYFILE](https://curl.se/libcurl/c/CURLOPT_SSH_PRIVATE_KEYFILE.html)
     pub const setSSHPrivateKeyfile = String(.CURLOPT_SSH_PRIVATE_KEYFILE);
+    /// File name with known hosts. See [CURLOPT_SSH_KNOWNHOSTS](https://curl.se/libcurl/c/CURLOPT_SSH_KNOWNHOSTS.html)
     pub const setSSHKnownHosts = String(.CURLOPT_SSH_KNOWNHOSTS);
+    /// Callback for known hosts handling. See [CURLOPT_SSH_KEYFUNCTION](https://curl.se/libcurl/c/CURLOPT_SSH_KEYFUNCTION.html)
+    pub const setSSHKnownHostsCallback = Callback(.CURLOPT_SSH_KEYFUNCTION, fn (cURL.CURL, *cURL.curl_khkey, *cURL.curl_hkey, cURL.curl_khmatch, *c_void) callconv(.C) void);
+    /// Custom pointer to pass to ssh key callback. See [CURLOPT_SSH_KEYDATA](https://curl.se/libcurl/c/CURLOPT_SSH_KEYDATA.html)
     pub const setSSHKeyData = UserData(.CURLOPT_SSH_KEYDATA);
+
     // Other Options
-    // TODO(haze): CURLOPT_SHARE and CURLOPT_PRIVATE
+    /// Share object to use. See [CURLOPT_SHARE](https://curl.se/libcurl/c/CURLOPT_SHARE.html)
+    pub const setShare = Parameter(.CURLOPT_SHARE, *cURL.CURLSH);
+    /// Private pointer to store. See [CURLOPT_PRIVATE](https://curl.se/libcurl/c/CURLOPT_PRIVATE.html)
+    pub const setPrivate = Parameter(.CURLOPT_PRIVATE, *c_void);
     /// Mode for creating new remote files. See [CURLOPT_NEW_FILE_PERMS](https://curl.se/libcurl/c/CURLOPT_NEW_FILE_PERMS.html)
     pub const setNewFilePerms = Long(.CURLOPT_NEW_FILE_PERMS);
     /// Mode for creating new remote directories. See [CURLOPT_NEW_DIRECTORY_PERMS](https://curl.se/libcurl/c/CURLOPT_NEW_DIRECTORY_PERMS.html)
     pub const setNewDirectoryPerms = Long(.CURLOPT_NEW_DIRECTORY_PERMS);
+
     // TELNET Options
+    /// TELNET options. See [CURLOPT_TELNETOPTIONS](https://curl.se/libcurl/c/CURLOPT_TELNETOPTIONS.html:with)
     pub const setTELNETOptions = CurlStringList(.CURLOPT_TELNETOPTIONS);
 };
