@@ -97,19 +97,29 @@ pub const EasyHandle = struct {
         }.func;
     }
 
-    // TODO(haze): this doesn't sit right with me, where slist starts off as null :/ thanks protty
-    fn CurlStringList(comptime option: cURL.CURLoption) fn (EasyHandle, StringList) util.CURLError!void {
+    const CURLStringList = struct {
+        ptr: [*c]cURL.curl_slist,
+
+        pub fn deinit(self: CURLStringList) void {
+            cURL.curl_slist_free_all(self.ptr);
+        }
+    };
+
+    fn CurlStringList(comptime option: cURL.CURLoption) fn (EasyHandle, StringList) util.CURLError!CURLStringList {
         return struct {
-            fn func(self: EasyHandle, input_list: StringList) util.CURLError!void {
-                var list: cURL.curl_slist = undefined;
+            fn func(self: EasyHandle, input_list: StringList) util.CURLError!CURLStringList {
+                var list: [*c]cURL.curl_slist = null;
                 for (input_list.items) |item| {
                     list = cURL.curl_slist_append(list, item.ptr);
                 }
-                return util.convertCurlError(cURL.curl_easy_setopt(
+                try util.convertCurlError(cURL.curl_easy_setopt(
                     self.handle,
                     option,
-                    maybe_list,
+                    list,
                 ));
+                return CURLStringList{
+                    .ptr = list,
+                };
             }
         }.func;
     }
@@ -344,7 +354,7 @@ pub const EasyHandle = struct {
     /// The POST data is this big. See [CURLOPT_POSTFIELDSIZE](https://curl.se/libcurl/c/CURLOPT_POSTFIELDSIZE.html)
     pub const setPostFieldSize = Long(.CURLOPT_POSTFIELDSIZE);
     /// The POST data is this big. See [CURLOPT_POSTFIELDSIZE_LARGE](https://curl.se/libcurl/c/CURLOPT_POSTFIELDSIZE_LARGE.html)
-    pub const setPostFieldSizeLarge = Parameter(.CURLOPT_MAIL_FROM, cURL.curl_off_t);
+    pub const setPostFieldSizeLarge = Parameter(.CURLOPT_POSTFIELDSIZE_LARGE, cURL.curl_off_t);
     /// Send a POST with this data - and copy it. See [CURLOPT_COPYPOSTFIELDS](https://curl.se/libcurl/c/CURLOPT_COPYPOSTFIELDS.html)
     pub const setCopyPostFields = String(.CURLOPT_COPYPOSTFIELDS);
     /// Multipart formpost HTTP POST. See [CURLOPT_HTTPPOST](https://curl.se/libcurl/c/CURLOPT_HTTPPOST.html)
@@ -496,7 +506,7 @@ pub const EasyHandle = struct {
     /// Set URL to work on with CURLU *. See [CURLOPT_CURLU](https://curl.se/libcurl/c/CURLOPT_CURLU.html)
     pub const setCURLUUrl = UserData(.CURLOPT_CURLU);
     /// Custom request/method. See [CURLOPT_CUSTOMREQUEST](https://curl.se/libcurl/c/CURLOPT_CUSTOMREQUEST.html)
-    pub const setCustomRequest = String(.CURLOPT_ABSTRACT_UNIX_SOCKET);
+    pub const setCustomRequest = String(.CURLOPT_CUSTOMREQUEST);
     /// Request file modification date and time. See [CURLOPT_FILETIME](https://curl.se/libcurl/c/CURLOPT_FILETIME.html)
     pub const setFileTime = Switch(.CURLOPT_FILETIME);
     /// List only. See [CURLOPT_DIRLISTONLY](https://curl.se/libcurl/c/CURLOPT_DIRLISTONLY.html)
